@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { getAnneeActive } from "@/lib/annee-active";
+import { getSiteOrigin } from "@/lib/site-url";
+import { envoyerEmail } from "@/lib/send-email";
 import ClassSelector from "@/components/ClassSelector";
-import CopyLinkButton from "@/components/CopyLinkButton";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 const MODELES = [
@@ -17,33 +19,76 @@ const MODELES = [
   }
 ];
 
-async function creerDemande(formData: FormData) {
+async function creerCampagne(formData: FormData) {
   "use server";
   const supabase = createClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
 
-  const { error } = await supabase.from("demandes_signature").insert({
-    classe_id: formData.get("classe_id") as string,
-    eleve_id: formData.get("eleve_id") as string,
-    sortie_id: (formData.get("sortie_id") as string) || null,
-    titre: formData.get("titre") as string,
-    contenu: formData.get("contenu") as string,
-    created_by: user?.id
-  });
+  const classe_id = formData.get("classe_id") as string;
+  const titre = formData.get("titre") as string;
+  const contenu = formData.get("contenu") as string;
+  const sortie_id = (formData.get("sortie_id") as string) || null;
+  const combos = formData.getAll("destinataire") as string[];
 
-  if (error) {
-    redirect(`/autorisations?classe=${formData.get("classe_id")}&error=${encodeURIComponent(error.message)}`);
+  if (combos.length === 0) {
+    redirect(`/autorisations?classe=${classe_id}&error=${encodeURIComponent("Sélectionne au moins un destinataire.")}`);
   }
-  redirect(`/autorisations?classe=${formData.get("classe_id")}`);
-}
 
-async function supprimerDemande(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  await supabase.from("demandes_signature").delete().eq("id", formData.get("id") as string);
-  redirect(`/autorisations?classe=${formData.get("classe_id")}`);
+  const { data: demande, error } = await supabase
+    .from("demandes_signature")
+    .insert({ classe_id, titre, contenu, sortie_id, created_by: user?.id })
+    .select()
+    .single();
+
+  if (error || !demande) {
+    redirect(`/autorisations?classe=${classe_id}&error=${encodeURIComponent(error?.message || "Erreur")}`);
+  }
+
+  const origin = getSiteOrigin();
+
+  for (const combo of combos) {
+    const [eleve_id, contact_id] = combo.split(":");
+
+    const { data: lienRow } = await supabase
+      .from("eleve_contacts")
+      .select("lien, contacts(prenom, nom, email)")
+      .eq("eleve_id", eleve_id)
+      .eq("contact_id", contact_id)
+      .single();
+
+    const contact = lienRow?.contacts as any;
+
+    const { data: dest } = await supabase
+      .from("demandes_signature_destinataires")
+      .insert({
+        demande_id: demande.id,
+        eleve_id,
+        contact_id,
+        lien: lienRow?.lien || null,
+        email_destinataire: contact?.email || null
+      })
+      .select()
+      .single();
+
+    if (dest && contact?.email) {
+      const url = `${origin}/signer/${dest.token}`;
+      const { envoye } = await envoyerEmail({
+        to: contact.email,
+        subject: `Autorisation à signer : ${titre}`,
+        html: `
+          <p>Bonjour ${contact.prenom || ""},</p>
+          <p>Une autorisation concernant votre enfant nécessite votre signature : <strong>${titre}</strong>.</p>
+          <p><a href="${url}">Cliquez ici pour lire le document et donner votre réponse</a></p>
+          <p style="color:#888;font-size:12px;">Ce lien est personnel, à usage unique.</p>
+        `
+      });
+      await supabase.from("demandes_signature_destinataires").update({ email_envoye: envoye }).eq("id", dest.id);
+    }
+  }
+
+  redirect(`/autorisations/${demande.id}`);
 }
 
 export default async function AutorisationsPage({
@@ -59,7 +104,10 @@ export default async function AutorisationsPage({
   const classeId = searchParams.classe || classes?.[0]?.id;
 
   const { data: affectationsClasse } = classeId
-    ? await supabase.from("affectations").select("eleves(id, nom, prenom)").eq("classe_id", classeId)
+    ? await supabase
+        .from("affectations")
+        .select("eleves(id, nom, prenom, eleve_contacts(contact_id, lien, contact_principal, contacts(nom, prenom, email)))")
+        .eq("classe_id", classeId)
     : { data: [] };
   const eleves = (affectationsClasse || [])
     .map((a: any) => a.eleves)
@@ -70,25 +118,16 @@ export default async function AutorisationsPage({
     ? await supabase.from("sorties_scolaires").select("id, titre").eq("classe_id", classeId).order("date_sortie", { ascending: false })
     : { data: [] };
 
-  const { data: demandes } = classeId
+  const { data: campagnes } = classeId
     ? await supabase
         .from("demandes_signature")
-        .select("id, titre, statut, nom_signataire, signe_le, pdf_path, token, eleves(nom, prenom)")
+        .select("id, titre, created_at, demandes_signature_destinataires(statut, reponse)")
         .eq("classe_id", classeId)
         .order("created_at", { ascending: false })
     : { data: [] };
 
-  // URLs de téléchargement signées pour les PDF déjà générés
-  const pdfUrls: Record<string, string> = {};
-  for (const d of demandes || []) {
-    if (d.pdf_path) {
-      const { data } = await supabase.storage.from("signatures").createSignedUrl(d.pdf_path, 60 * 10);
-      if (data?.signedUrl) pdfUrls[d.id] = data.signedUrl;
-    }
-  }
-
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-4xl">
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <h1 className="font-display text-3xl text-ardoise-800">Autorisations (signature électronique)</h1>
         <ClassSelector classes={classes || []} />
@@ -100,17 +139,27 @@ export default async function AutorisationsPage({
 
       {classeId && (
         <div className="mb-8 card">
-          <h2 className="mb-3 font-display text-lg text-ardoise-700">Nouvelle demande</h2>
-          <form action={creerDemande} className="space-y-4">
+          <h2 className="mb-3 font-display text-lg text-ardoise-700">Nouvelle campagne d'autorisation</h2>
+          <form action={creerCampagne} className="space-y-4">
             <input type="hidden" name="classe_id" value={classeId} />
+
             <div>
-              <label className="label">Élève concerné</label>
-              <select className="input" name="eleve_id" required>
-                <option value="">Choisir…</option>
-                {eleves.map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.prenom} {e.nom}</option>
-                ))}
-              </select>
+              <label className="label">Modèles (à copier-coller ci-dessous)</label>
+              {MODELES.map((m) => (
+                <details key={m.titre} className="mt-1">
+                  <summary className="cursor-pointer text-xs text-ardoise-600 underline">{m.titre}</summary>
+                  <p className="mt-1 rounded bg-ardoise-50 p-2 text-xs text-ardoise-600">{m.contenu}</p>
+                </details>
+              ))}
+            </div>
+
+            <div>
+              <label className="label">Titre de la demande</label>
+              <input className="input" name="titre" placeholder="ex. Autorisation droit à l'image" required />
+            </div>
+            <div>
+              <label className="label">Texte de l'autorisation</label>
+              <textarea className="input" name="contenu" rows={4} required />
             </div>
             {sorties && sorties.length > 0 && (
               <div>
@@ -123,76 +172,71 @@ export default async function AutorisationsPage({
                 </select>
               </div>
             )}
+
             <div>
-              <label className="label">Modèles (à copier-coller dans les champs ci-dessous)</label>
-              {MODELES.map((m) => (
-                <details key={m.titre} className="mt-1">
-                  <summary className="cursor-pointer text-xs text-ardoise-600 underline">{m.titre}</summary>
-                  <p className="mt-1 rounded bg-ardoise-50 p-2 text-xs text-ardoise-600">{m.contenu}</p>
-                </details>
-              ))}
+              <label className="label">Destinataires</label>
+              <p className="mb-2 text-xs text-ardoise-400">
+                Un lien de signature individuel sera envoyé à chaque contact coché.
+                Les deux parents d'un même enfant sont pré-cochés si les deux sont
+                enregistrés (utile en cas de parents séparés — chacun doit répondre).
+              </p>
+              <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg border border-ardoise-100 p-3">
+                {eleves.map((e: any) => (
+                  <div key={e.id}>
+                    <p className="text-sm font-medium text-ardoise-800">{e.prenom} {e.nom}</p>
+                    {(!e.eleve_contacts || e.eleve_contacts.length === 0) && (
+                      <p className="text-xs text-ardoise-400">
+                        Aucun contact enregistré —{" "}
+                        <Link href={`/eleves/${e.id}`} className="underline">en ajouter un</Link>.
+                      </p>
+                    )}
+                    {e.eleve_contacts?.map((c: any) => (
+                      <label key={c.contact_id} className="ml-3 flex items-center gap-2 text-xs text-ardoise-600">
+                        <input
+                          type="checkbox"
+                          name="destinataire"
+                          value={`${e.id}:${c.contact_id}`}
+                          defaultChecked={c.contact_principal}
+                        />
+                        {c.lien} — {c.contacts?.prenom} {c.contacts?.nom}
+                        {c.contacts?.email ? ` (${c.contacts.email})` : " — pas d'email, lien à copier manuellement"}
+                      </label>
+                    ))}
+                  </div>
+                ))}
+                {eleves.length === 0 && (
+                  <p className="text-sm text-ardoise-400">Aucun élève affecté à cette classe.</p>
+                )}
+              </div>
             </div>
-            <div>
-              <label className="label">Titre de la demande</label>
-              <input className="input" name="titre" placeholder="ex. Autorisation droit à l'image" required />
-            </div>
-            <div>
-              <label className="label">Texte de l'autorisation</label>
-              <textarea className="input" name="contenu" rows={4} required />
-            </div>
-            <button className="btn-primary w-full" type="submit">Créer la demande</button>
+
+            <button className="btn-primary w-full" type="submit">Créer et envoyer</button>
           </form>
         </div>
       )}
 
-      <h2 className="mb-3 font-display text-lg text-ardoise-700">Demandes en cours</h2>
+      <h2 className="mb-3 font-display text-lg text-ardoise-700">Campagnes</h2>
       <div className="space-y-2">
-        {(!demandes || demandes.length === 0) && (
-          <p className="text-sm text-ardoise-400">Aucune demande pour cette classe.</p>
+        {(!campagnes || campagnes.length === 0) && (
+          <p className="text-sm text-ardoise-400">Aucune campagne pour cette classe.</p>
         )}
-        {demandes?.map((d: any) => (
-          <div key={d.id} className="card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-medium text-ardoise-800">{d.titre}</p>
-                <p className="text-xs text-ardoise-400">
-                  {d.eleves?.prenom} {d.eleves?.nom}
-                </p>
+        {campagnes?.map((c: any) => {
+          const total = c.demandes_signature_destinataires?.length || 0;
+          const repondu = c.demandes_signature_destinataires?.filter((d: any) => d.statut === "repondu").length || 0;
+          const oui = c.demandes_signature_destinataires?.filter((d: any) => d.reponse === "oui").length || 0;
+          const non = c.demandes_signature_destinataires?.filter((d: any) => d.reponse === "non").length || 0;
+          return (
+            <Link key={c.id} href={`/autorisations/${c.id}`} className="card block hover:opacity-80">
+              <div className="flex items-center justify-between">
+                <p className="font-medium text-ardoise-800">{c.titre}</p>
+                <p className="text-xs text-ardoise-500">{repondu}/{total} réponses</p>
               </div>
-              <span
-                className={`shrink-0 rounded-full px-2 py-1 text-xs text-white ${
-                  d.statut === "signe" ? "bg-ardoise-600" : "bg-corail"
-                }`}
-              >
-                {d.statut === "signe" ? "✓ Signé" : "En attente"}
-              </span>
-            </div>
-
-            {d.statut === "signe" ? (
-              <p className="mt-2 text-xs text-ardoise-500">
-                Signé par {d.nom_signataire} le {d.signe_le && new Date(d.signe_le).toLocaleDateString("fr-FR")}
-                {pdfUrls[d.id] && (
-                  <>
-                    {" · "}
-                    <a href={pdfUrls[d.id]} target="_blank" rel="noreferrer" className="underline text-ardoise-700">
-                      Télécharger le PDF signé
-                    </a>
-                  </>
-                )}
+              <p className="text-xs text-ardoise-400">
+                {new Date(c.created_at).toLocaleDateString("fr-FR")} · {oui} oui · {non} non
               </p>
-            ) : (
-              <div className="mt-2">
-                <CopyLinkButton token={d.token} />
-              </div>
-            )}
-
-            <form action={supprimerDemande} className="mt-2">
-              <input type="hidden" name="id" value={d.id} />
-              <input type="hidden" name="classe_id" value={classeId} />
-              <button className="text-xs text-red-500 underline" type="submit">Supprimer</button>
-            </form>
-          </div>
-        ))}
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

@@ -1,7 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { getAnneeActive } from "@/lib/annee-active";
-import { getSiteOrigin } from "@/lib/site-url";
-import { envoyerEmail } from "@/lib/send-email";
 import ClassSelector from "@/components/ClassSelector";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -46,48 +44,25 @@ async function creerCampagne(formData: FormData) {
     redirect(`/autorisations?classe=${classe_id}&error=${encodeURIComponent(error?.message || "Erreur")}`);
   }
 
-  const origin = getSiteOrigin();
-
   for (const combo of combos) {
     const [eleve_id, contact_id] = combo.split(":");
-
     const { data: lienRow } = await supabase
       .from("eleve_contacts")
-      .select("lien, contacts(prenom, nom, email)")
+      .select("lien, contacts(email)")
       .eq("eleve_id", eleve_id)
       .eq("contact_id", contact_id)
       .single();
 
-    const contact = lienRow?.contacts as any;
-
-    const { data: dest } = await supabase
-      .from("demandes_signature_destinataires")
-      .insert({
-        demande_id: demande.id,
-        eleve_id,
-        contact_id,
-        lien: lienRow?.lien || null,
-        email_destinataire: contact?.email || null
-      })
-      .select()
-      .single();
-
-    if (dest && contact?.email) {
-      const url = `${origin}/signer/${dest.token}`;
-      const { envoye } = await envoyerEmail({
-        to: contact.email,
-        subject: `Autorisation à signer : ${titre}`,
-        html: `
-          <p>Bonjour ${contact.prenom || ""},</p>
-          <p>Une autorisation concernant votre enfant nécessite votre signature : <strong>${titre}</strong>.</p>
-          <p><a href="${url}">Cliquez ici pour lire le document et donner votre réponse</a></p>
-          <p style="color:#888;font-size:12px;">Ce lien est personnel, à usage unique.</p>
-        `
-      });
-      await supabase.from("demandes_signature_destinataires").update({ email_envoye: envoye }).eq("id", dest.id);
-    }
+    await supabase.from("demandes_signature_destinataires").insert({
+      demande_id: demande.id,
+      eleve_id,
+      contact_id,
+      lien: lienRow?.lien || null,
+      email_destinataire: (lienRow?.contacts as any)?.email || null
+    });
   }
 
+  // Créée, mais PAS envoyée : l'envoi se fait séparément depuis la page de la campagne
   redirect(`/autorisations/${demande.id}`);
 }
 
@@ -121,7 +96,7 @@ export default async function AutorisationsPage({
   const { data: campagnes } = classeId
     ? await supabase
         .from("demandes_signature")
-        .select("id, titre, created_at, demandes_signature_destinataires(statut, reponse)")
+        .select("id, titre, created_at, demandes_signature_destinataires(statut, reponse, email_envoye)")
         .eq("classe_id", classeId)
         .order("created_at", { ascending: false })
     : { data: [] };
@@ -140,6 +115,10 @@ export default async function AutorisationsPage({
       {classeId && (
         <div className="mb-8 card">
           <h2 className="mb-3 font-display text-lg text-ardoise-700">Nouvelle campagne d'autorisation</h2>
+          <p className="mb-3 text-xs text-ardoise-400">
+            La campagne est d'abord créée sans être envoyée — tu pourras relire,
+            modifier et choisir quand l'envoyer depuis sa page dédiée.
+          </p>
           <form action={creerCampagne} className="space-y-4">
             <input type="hidden" name="classe_id" value={classeId} />
 
@@ -176,9 +155,7 @@ export default async function AutorisationsPage({
             <div>
               <label className="label">Destinataires</label>
               <p className="mb-2 text-xs text-ardoise-400">
-                Un lien de signature individuel sera envoyé à chaque contact coché.
-                Les deux parents d'un même enfant sont pré-cochés si les deux sont
-                enregistrés (utile en cas de parents séparés — chacun doit répondre).
+                Tu pourras en ajouter ou en retirer après la création.
               </p>
               <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg border border-ardoise-100 p-3">
                 {eleves.map((e: any) => (
@@ -210,7 +187,7 @@ export default async function AutorisationsPage({
               </div>
             </div>
 
-            <button className="btn-primary w-full" type="submit">Créer et envoyer</button>
+            <button className="btn-primary w-full" type="submit">Créer la campagne</button>
           </form>
         </div>
       )}
@@ -223,6 +200,7 @@ export default async function AutorisationsPage({
         {campagnes?.map((c: any) => {
           const total = c.demandes_signature_destinataires?.length || 0;
           const repondu = c.demandes_signature_destinataires?.filter((d: any) => d.statut === "repondu").length || 0;
+          const envoyes = c.demandes_signature_destinataires?.filter((d: any) => d.email_envoye).length || 0;
           const oui = c.demandes_signature_destinataires?.filter((d: any) => d.reponse === "oui").length || 0;
           const non = c.demandes_signature_destinataires?.filter((d: any) => d.reponse === "non").length || 0;
           return (
@@ -232,7 +210,7 @@ export default async function AutorisationsPage({
                 <p className="text-xs text-ardoise-500">{repondu}/{total} réponses</p>
               </div>
               <p className="text-xs text-ardoise-400">
-                {new Date(c.created_at).toLocaleDateString("fr-FR")} · {oui} oui · {non} non
+                {new Date(c.created_at).toLocaleDateString("fr-FR")} · {envoyes}/{total} envoyés · {oui} oui · {non} non
               </p>
             </Link>
           );

@@ -24,6 +24,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/dashboard", label: "Aujourd'hui" },
     { href: "/classes", label: "Classes" },
     { href: "/eleves", label: "Élèves (annuaire)" },
+    { href: "/contacts", label: "Contacts" },
     { href: "/matieres", label: "Matières" },
     { href: "/emploi-du-temps", label: "Emploi du temps" },
     { href: "/cahier-journal", label: "Cahier journal" },
@@ -32,6 +33,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/coin-lecture", label: "Coin lecture" },
     { href: "/carnet-de-liaison", label: "Carnet de liaison" },
     { href: "/autorisations", label: "Autorisations (signatures)" },
+    { href: "/documents", label: "Documents (information)" },
     { href: "/sorties", label: "Sorties scolaires" },
     { href: "/projets", label: "Projets d'école" }
   ];

@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: 'Fraunces', serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+body {
+  background-color: #faf7f0;
+  color: #20221f;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors;
+}
+.btn-primary {
+  @apply btn bg-ardoise-700 text-craie hover:bg-ardoise-800;
+}
+.btn-ghost {
+  @apply btn bg-transparent text-ardoise-700 hover:bg-ardoise-100;
+}
+.card {
+  @apply rounded-xl border border-ardoise-100 bg-white p-5 shadow-sm;
+}
+.input {
+  @apply w-full rounded-lg border border-ardoise-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ardoise-400;
+}
+.label {
+  @apply mb-1 block text-xs font-medium uppercase tracking-wide text-ardoise-500;
+}

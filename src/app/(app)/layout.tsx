@@ -1,17 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { cookies, headers } from "next/headers";
 import { getAnneeActive } from "@/lib/annee-active";
 import AnneeSelector from "@/components/AnneeSelector";
-
-async function changerAnnee(formData: FormData) {
-  "use server";
-  const annee_id = formData.get("annee_id") as string;
-  cookies().set("annee_id", annee_id, { path: "/", maxAge: 60 * 60 * 24 * 365 });
-  const referer = headers().get("referer") || "/dashboard";
-  redirect(referer);
-}
+import { changerAnnee } from "./actions";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
@@ -39,6 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/bilans", label: "Bilans périodiques" },
     { href: "/coin-lecture", label: "Coin lecture" },
     { href: "/carnet-de-liaison", label: "Carnet de liaison" },
+    { href: "/autorisations", label: "Autorisations (signatures)" },
     { href: "/sorties", label: "Sorties scolaires" },
     { href: "/projets", label: "Projets d'école" }
   ];

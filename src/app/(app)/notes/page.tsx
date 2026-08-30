@@ -72,7 +72,7 @@ export default async function NotesPage({
   const { data: evaluations } = eleveId
     ? await supabase
         .from("evaluations")
-        .select("id, date, niveau, commentaire, matieres(nom), competences(libelle)")
+        .select("id, date, niveau, commentaire, matiere_id, competence_id, matieres(nom), competences(libelle)")
         .eq("eleve_id", eleveId)
         .order("date", { ascending: false })
     : { data: [] };

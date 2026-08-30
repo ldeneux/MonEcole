@@ -5,6 +5,8 @@ export async function genererPdfSignature({
   contenu,
   nomEleve,
   nomSignataire,
+  role,
+  reponse,
   dateSignature,
   signatureDataUrl
 }: {
@@ -12,6 +14,8 @@ export async function genererPdfSignature({
   contenu: string;
   nomEleve: string;
   nomSignataire: string;
+  role?: string | null;
+  reponse: "oui" | "non";
   dateSignature: Date;
   signatureDataUrl: string; // "data:image/png;base64,...."
 }): Promise<Uint8Array> {
@@ -53,6 +57,13 @@ export async function genererPdfSignature({
   }
 
   y -= 30;
+  const libelleReponse = reponse === "oui" ? "AUTORISE" : "N'AUTORISE PAS";
+  const couleurReponse = reponse === "oui" ? rgb(0.18, 0.4, 0.28) : rgb(0.75, 0.25, 0.2);
+  page.drawText(
+    `Réponse : ${libelleReponse}${role ? ` (${role})` : ""}`,
+    { x: marge, y, size: 13, font: fontBold, color: couleurReponse }
+  );
+  y -= 24;
   page.drawText(
     `Signé électroniquement par : ${nomSignataire}`,
     { x: marge, y, size: 11, font: fontBold }

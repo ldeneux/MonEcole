@@ -11,7 +11,8 @@ async function modifierEleve(formData: FormData) {
     .update({
       nom: formData.get("nom") as string,
       prenom: formData.get("prenom") as string,
-      date_naissance: (formData.get("date_naissance") as string) || null
+      date_naissance: (formData.get("date_naissance") as string) || null,
+      sexe: (formData.get("sexe") as string) || null
     })
     .eq("id", formData.get("eleve_id") as string);
   redirect(`/eleves/${formData.get("eleve_id")}`);
@@ -109,7 +110,36 @@ async function supprimerAbsence(formData: FormData) {
   redirect(`/eleves/${formData.get("eleve_id")}`);
 }
 
-export default async function EleveDetailPage({ params }: { params: { id: string } }) {
+async function modifierContact(formData: FormData) {
+  "use server";
+  const supabase = createClient();
+  await supabase
+    .from("contacts")
+    .update({
+      nom: formData.get("nom") as string,
+      prenom: formData.get("prenom") as string,
+      telephone: (formData.get("telephone") as string) || null,
+      email: (formData.get("email") as string) || null,
+      adresse: (formData.get("adresse") as string) || null
+    })
+    .eq("id", formData.get("contact_id") as string);
+  await supabase
+    .from("eleve_contacts")
+    .update({
+      lien: formData.get("lien") as string,
+      contact_principal: formData.get("contact_principal") === "on"
+    })
+    .eq("id", formData.get("lien_id") as string);
+  redirect(`/eleves/${formData.get("eleve_id")}`);
+}
+
+export default async function EleveDetailPage({
+  params,
+  searchParams
+}: {
+  params: { id: string };
+  searchParams: { editcontact?: string };
+}) {
   const supabase = createClient();
   const { data: eleve } = await supabase.from("eleves").select("*").eq("id", params.id).single();
   if (!eleve) redirect("/eleves");
@@ -158,6 +188,14 @@ export default async function EleveDetailPage({ params }: { params: { id: string
             <div>
               <label className="label">Date de naissance</label>
               <input className="input" type="date" name="date_naissance" defaultValue={eleve.date_naissance || ""} />
+            </div>
+            <div>
+              <label className="label">Sexe</label>
+              <select className="input" name="sexe" defaultValue={eleve.sexe || ""}>
+                <option value="">Non renseigné</option>
+                <option value="M">Garçon</option>
+                <option value="F">Fille</option>
+              </select>
             </div>
             <div className="flex gap-2">
               <button className="btn-primary text-sm" type="submit">Enregistrer</button>
@@ -209,20 +247,54 @@ export default async function EleveDetailPage({ params }: { params: { id: string
       <div className="mb-6 card">
         <h2 className="mb-3 font-display text-lg text-ardoise-700">Contacts (parents, tuteurs…)</h2>
         <ul className="mb-4 space-y-2 text-sm">
-          {contacts?.map((c: any) => (
+          {contacts?.map((c: any) =>
+            searchParams.editcontact === c.id ? (
+              <li key={c.id}>
+                <form action={modifierContact} className="card space-y-2">
+                  <input type="hidden" name="lien_id" value={c.id} />
+                  <input type="hidden" name="contact_id" value={c.contacts?.id} />
+                  <input type="hidden" name="eleve_id" value={eleve.id} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className="input text-sm" name="prenom" defaultValue={c.contacts?.prenom} required />
+                    <input className="input text-sm" name="nom" defaultValue={c.contacts?.nom} required />
+                  </div>
+                  <select className="input text-sm" name="lien" defaultValue={c.lien}>
+                    {LIENS.map((l) => (
+                      <option key={l} value={l}>{l}</option>
+                    ))}
+                  </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className="input text-sm" name="telephone" defaultValue={c.contacts?.telephone || ""} placeholder="Téléphone" />
+                    <input className="input text-sm" type="email" name="email" defaultValue={c.contacts?.email || ""} placeholder="Email" />
+                  </div>
+                  <input className="input text-sm" name="adresse" defaultValue={c.contacts?.adresse || ""} placeholder="Adresse" />
+                  <label className="flex items-center gap-2 text-xs text-ardoise-600">
+                    <input type="checkbox" name="contact_principal" defaultChecked={c.contact_principal} /> Contact principal
+                  </label>
+                  <div className="flex gap-2">
+                    <button className="btn-primary text-xs" type="submit">Enregistrer</button>
+                    <a href={`/eleves/${eleve.id}`} className="btn-ghost border border-ardoise-200 text-xs">Annuler</a>
+                  </div>
+                </form>
+              </li>
+            ) : (
             <li key={c.id} className="flex items-center justify-between">
               <span>
                 <strong>{c.lien}</strong>{c.contact_principal ? " · principal" : ""} — {c.contacts?.prenom} {c.contacts?.nom}
                 {c.contacts?.telephone ? ` · ${c.contacts.telephone}` : ""}
                 {c.contacts?.email ? ` · ${c.contacts.email}` : ""}
               </span>
-              <form action={delierContact}>
-                <input type="hidden" name="lien_id" value={c.id} />
-                <input type="hidden" name="eleve_id" value={eleve.id} />
-                <button className="text-xs text-red-500 underline" type="submit">Retirer</button>
-              </form>
+              <span className="flex gap-2 text-xs">
+                <a href={`/eleves/${eleve.id}?editcontact=${c.id}`} className="text-ardoise-600 underline">Modifier</a>
+                <form action={delierContact}>
+                  <input type="hidden" name="lien_id" value={c.id} />
+                  <input type="hidden" name="eleve_id" value={eleve.id} />
+                  <button className="text-red-500 underline" type="submit">Retirer</button>
+                </form>
+              </span>
             </li>
-          ))}
+            )
+          )}
           {(!contacts || contacts.length === 0) && (
             <li className="text-ardoise-400">Aucun contact enregistré.</li>
           )}

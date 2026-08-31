@@ -153,7 +153,7 @@ export async function GET(request: Request, { params }: { params: { classeId: st
 
   const buffer = (await pptx.write({ outputType: "nodebuffer" })) as Buffer;
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       "Content-Disposition": `attachment; filename="reunion-rentree-${nomClasse.replace(/[^a-z0-9]+/gi, "-")}.pptx"`

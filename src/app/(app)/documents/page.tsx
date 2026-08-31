@@ -97,6 +97,14 @@ export default async function DocumentsPage({
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <h1 className="font-display text-3xl text-ardoise-800">Documents (information)</h1>
         <ClassSelector classes={classes || []} />
+        {classeId && (
+          <a
+            href={`/api/pptx-reunion/${classeId}`}
+            className="btn-ghost border border-ardoise-200 text-sm"
+          >
+            📊 Générer la présentation PowerPoint (réunion de rentrée)
+          </a>
+        )}
       </div>
       <p className="mb-6 text-sm text-ardoise-500">
         Pour informer les familles sans rien leur demander en retour (réunion,

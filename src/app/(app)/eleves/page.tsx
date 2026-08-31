@@ -16,6 +16,7 @@ async function creerEleve(formData: FormData) {
       nom: formData.get("nom") as string,
       prenom: formData.get("prenom") as string,
       date_naissance: (formData.get("date_naissance") as string) || null,
+      sexe: (formData.get("sexe") as string) || null,
       created_by: user?.id
     })
     .select()
@@ -77,6 +78,14 @@ export default async function ElevesPage({ searchParams }: { searchParams: { err
           <div>
             <label className="label">Date de naissance</label>
             <input className="input" type="date" name="date_naissance" />
+          </div>
+          <div>
+            <label className="label">Sexe</label>
+            <select className="input" name="sexe">
+              <option value="">Non renseigné</option>
+              <option value="M">Garçon</option>
+              <option value="F">Fille</option>
+            </select>
           </div>
           <div>
             <label className="label">Affecter directement à une classe (optionnel)</label>

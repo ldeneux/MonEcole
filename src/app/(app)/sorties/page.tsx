@@ -19,6 +19,8 @@ async function creerSortie(formData: FormData) {
       titre: formData.get("titre") as string,
       lieu: (formData.get("lieu") as string) || null,
       date_sortie: formData.get("date_sortie") as string,
+      date_fin: (formData.get("date_fin") as string) || (formData.get("date_sortie") as string),
+      avec_nuitee: formData.get("avec_nuitee") === "on",
       heure_debut: (formData.get("heure_debut") as string) || null,
       heure_fin: (formData.get("heure_fin") as string) || null,
       objectifs: (formData.get("objectifs") as string) || null,
@@ -60,7 +62,7 @@ export default async function SortiesPage({ searchParams }: { searchParams: { cl
   const { data: sorties } = classeId
     ? await supabase
         .from("sorties_scolaires")
-        .select("id, titre, lieu, date_sortie, sorties_participants(autorisation, fiche_sanitaire, assurance)")
+        .select("id, titre, lieu, date_sortie, date_fin, avec_nuitee, sorties_participants(autorisation, fiche_sanitaire, assurance)")
         .eq("classe_id", classeId)
         .order("date_sortie", { ascending: false })
     : { data: [] };
@@ -88,7 +90,10 @@ export default async function SortiesPage({ searchParams }: { searchParams: { cl
                   <div>
                     <p className="font-medium text-ardoise-800">{s.titre}</p>
                     <p className="text-xs text-ardoise-400">
-                      {new Date(s.date_sortie).toLocaleDateString("fr-FR")} {s.lieu ? `· ${s.lieu}` : ""}
+                      {new Date(s.date_sortie).toLocaleDateString("fr-FR")}
+                      {s.date_fin && s.date_fin !== s.date_sortie && ` → ${new Date(s.date_fin).toLocaleDateString("fr-FR")}`}
+                      {s.avec_nuitee && " · avec nuitée"}
+                      {s.lieu ? ` · ${s.lieu}` : ""}
                     </p>
                   </div>
                   <p className="text-xs text-ardoise-500">
@@ -121,15 +126,24 @@ export default async function SortiesPage({ searchParams }: { searchParams: { cl
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="label">Date</label>
+                <label className="label">Date de début</label>
                 <input className="input" type="date" name="date_sortie" required />
               </div>
               <div>
-                <label className="label">Début</label>
+                <label className="label">Date de fin (si plusieurs jours)</label>
+                <input className="input" type="date" name="date_fin" />
+              </div>
+              <label className="mt-6 flex items-center gap-2 text-sm text-ardoise-600">
+                <input type="checkbox" name="avec_nuitee" /> Avec nuitée
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Heure de départ</label>
                 <input className="input" type="time" name="heure_debut" />
               </div>
               <div>
-                <label className="label">Fin</label>
+                <label className="label">Heure de retour</label>
                 <input className="input" type="time" name="heure_fin" />
               </div>
             </div>

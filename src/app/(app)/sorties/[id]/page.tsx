@@ -10,6 +10,8 @@ async function modifierSortie(formData: FormData) {
       titre: formData.get("titre") as string,
       lieu: (formData.get("lieu") as string) || null,
       date_sortie: formData.get("date_sortie") as string,
+      date_fin: (formData.get("date_fin") as string) || (formData.get("date_sortie") as string),
+      avec_nuitee: formData.get("avec_nuitee") === "on",
       heure_debut: (formData.get("heure_debut") as string) || null,
       heure_fin: (formData.get("heure_fin") as string) || null,
       objectifs: (formData.get("objectifs") as string) || null
@@ -50,6 +52,13 @@ async function ajouterAccompagnateur(formData: FormData) {
   redirect(`/sorties/${formData.get("sortie_id")}`);
 }
 
+async function supprimerAccompagnateur(formData: FormData) {
+  "use server";
+  const supabase = createClient();
+  await supabase.from("sorties_accompagnateurs").delete().eq("id", formData.get("id") as string);
+  redirect(`/sorties/${formData.get("sortie_id")}`);
+}
+
 export default async function SortieDetailPage({
   params,
   searchParams
@@ -60,7 +69,7 @@ export default async function SortieDetailPage({
   const supabase = createClient();
   const { data: sortie } = await supabase
     .from("sorties_scolaires")
-    .select("id, titre, lieu, date_sortie, heure_debut, heure_fin, objectifs, classes(nom)")
+    .select("id, titre, lieu, date_sortie, date_fin, avec_nuitee, heure_debut, heure_fin, objectifs, classes(nom)")
     .eq("id", params.id)
     .single();
   if (!sortie) redirect("/sorties");
@@ -92,15 +101,24 @@ export default async function SortieDetailPage({
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="label">Date</label>
+                <label className="label">Date de début</label>
                 <input className="input" type="date" name="date_sortie" defaultValue={sortie.date_sortie} required />
               </div>
               <div>
-                <label className="label">Début</label>
+                <label className="label">Date de fin</label>
+                <input className="input" type="date" name="date_fin" defaultValue={sortie.date_fin || sortie.date_sortie} />
+              </div>
+              <label className="mt-6 flex items-center gap-2 text-sm text-ardoise-600">
+                <input type="checkbox" name="avec_nuitee" defaultChecked={sortie.avec_nuitee} /> Avec nuitée
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Heure de départ</label>
                 <input className="input" type="time" name="heure_debut" defaultValue={sortie.heure_debut?.slice(0, 5) || ""} />
               </div>
               <div>
-                <label className="label">Fin</label>
+                <label className="label">Heure de retour</label>
                 <input className="input" type="time" name="heure_fin" defaultValue={sortie.heure_fin?.slice(0, 5) || ""} />
               </div>
             </div>
@@ -120,6 +138,8 @@ export default async function SortieDetailPage({
             <h1 className="mb-1 font-display text-3xl text-ardoise-800">{sortie.titre}</h1>
             <p className="text-sm text-ardoise-500">
               {(sortie as any).classes?.nom} · {new Date(sortie.date_sortie).toLocaleDateString("fr-FR")}
+              {sortie.date_fin && sortie.date_fin !== sortie.date_sortie && ` → ${new Date(sortie.date_fin).toLocaleDateString("fr-FR")}`}
+              {sortie.avec_nuitee && " · avec nuitée"}
               {sortie.lieu ? ` · ${sortie.lieu}` : ""}
             </p>
             {sortie.objectifs && <p className="mt-2 text-sm text-ardoise-600">{sortie.objectifs}</p>}
@@ -171,7 +191,14 @@ export default async function SortieDetailPage({
       <ul className="mb-4 space-y-1 text-sm text-ardoise-700">
         {accompagnateurs?.length === 0 && <li className="text-ardoise-400">Aucun accompagnateur ajouté.</li>}
         {accompagnateurs?.map((a) => (
-          <li key={a.id}>{a.nom}{a.role ? ` — ${a.role}` : ""}</li>
+          <li key={a.id} className="flex items-center justify-between">
+            <span>{a.nom}{a.role ? ` — ${a.role}` : ""}</span>
+            <form action={supprimerAccompagnateur}>
+              <input type="hidden" name="id" value={a.id} />
+              <input type="hidden" name="sortie_id" value={sortie.id} />
+              <button className="text-xs text-red-500 underline" type="submit">Retirer</button>
+            </form>
+          </li>
         ))}
       </ul>
       <form action={ajouterAccompagnateur} className="card flex max-w-md flex-wrap items-end gap-3">

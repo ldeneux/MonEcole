@@ -3,28 +3,37 @@ import { getAnneeActive } from "@/lib/annee-active";
 import ClassSelector from "@/components/ClassSelector";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { positionnerChevauchements, heureVersMinutes, minutesVersHeure } from "@/lib/edt-layout";
 
 const JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
+const PX_PAR_MINUTE = 2;
 
 async function enregistrerCreneau(formData: FormData) {
   "use server";
   const supabase = createClient();
   const id = formData.get("id") as string;
   const classe_id = formData.get("classe_id") as string;
-  const payload = {
+  const base = {
     classe_id,
     jour: Number(formData.get("jour")),
     heure_debut: formData.get("heure_debut") as string,
     heure_fin: formData.get("heure_fin") as string,
     matiere_id: (formData.get("matiere_id") as string) || null,
-    libelle: (formData.get("libelle") as string) || null,
-    niveau: (formData.get("niveau") as string) || null
+    libelle: (formData.get("libelle") as string) || null
   };
 
   if (id) {
-    await supabase.from("emploi_du_temps").update(payload).eq("id", id);
+    // Édition : un seul créneau, un seul niveau
+    const niveau = (formData.get("niveau") as string) || null;
+    await supabase.from("emploi_du_temps").update({ ...base, niveau }).eq("id", id);
   } else {
-    await supabase.from("emploi_du_temps").insert(payload);
+    // Création : si plusieurs niveaux sont cochés, on crée une ligne par niveau
+    const niveaux = formData.getAll("niveaux") as string[];
+    if (niveaux.length > 0) {
+      await supabase.from("emploi_du_temps").insert(niveaux.map((niveau) => ({ ...base, niveau })));
+    } else {
+      await supabase.from("emploi_du_temps").insert({ ...base, niveau: null });
+    }
   }
   redirect(`/emploi-du-temps?classe=${classe_id}`);
 }
@@ -42,7 +51,7 @@ export default async function EmploiDuTempsPage({
   searchParams: { classe?: string; edit?: string };
 }) {
   const supabase = createClient();
-  const { annees, active } = await getAnneeActive();
+  const { active } = await getAnneeActive();
   const { data: classes } = active
     ? await supabase.from("classes").select("id, nom, niveaux").eq("annee_id", active.id).order("nom")
     : { data: [] };
@@ -64,6 +73,24 @@ export default async function EmploiDuTempsPage({
   const creneauAEditer = searchParams.edit ? creneaux?.find((c: any) => c.id === searchParams.edit) : null;
   const colonnes = multiniveau ? [...niveaux, ""] : [""]; // "" = commun / classe entière
 
+  // ---------- Calcul de la plage horaire affichée (arrondie à l'heure) ----------
+  const tous = creneaux || [];
+  const debuts = tous.map((c: any) => heureVersMinutes(c.heure_debut));
+  const fins = tous.map((c: any) => heureVersMinutes(c.heure_fin));
+  let debutPlage = debuts.length ? Math.min(...debuts) : 8 * 60;
+  let finPlage = fins.length ? Math.max(...fins) : 18 * 60;
+  debutPlage = Math.floor(debutPlage / 60) * 60;
+  finPlage = Math.ceil(finPlage / 60) * 60;
+  if (finPlage <= debutPlage) finPlage = debutPlage + 60;
+  const hauteurTotale = (finPlage - debutPlage) * PX_PAR_MINUTE;
+
+  const heuresAxe: number[] = [];
+  for (let h = debutPlage; h <= finPlage; h += 60) heuresAxe.push(h);
+
+  const fondQuadrillage = {
+    backgroundImage: `repeating-linear-gradient(to bottom, #e5e0d8 0px, #e5e0d8 1px, transparent 1px, transparent ${15 * PX_PAR_MINUTE}px)`
+  };
+
   return (
     <div className="max-w-6xl">
       <div className="mb-6 flex items-center justify-between">
@@ -82,53 +109,92 @@ export default async function EmploiDuTempsPage({
             </p>
           )}
 
-          <div className="mb-8 grid grid-cols-5 gap-3">
-            {JOURS.map((jour, idx) => (
-              <div key={jour} className="card min-h-[220px]">
-                <p className="mb-3 font-display text-sm text-ardoise-700">{jour}</p>
-                <div className={multiniveau ? "grid gap-2" : ""} style={multiniveau ? { gridTemplateColumns: `repeat(${colonnes.length}, 1fr)` } : undefined}>
-                  {colonnes.map((col) => (
-                    <div key={col || "commun"}>
-                      {multiniveau && (
-                        <p className="mb-1 text-[10px] uppercase text-ardoise-400">{col || "Commun"}</p>
-                      )}
-                      <ul className="space-y-1">
-                        {creneaux
-                          ?.filter((c: any) => c.jour === idx + 1 && (c.niveau || "") === col)
-                          .map((c: any) => (
-                            <li
-                              key={c.id}
-                              className="rounded-md px-2 py-1 text-[11px] text-white"
-                              style={{ backgroundColor: c.matieres?.couleur || "#3f7264" }}
-                            >
-                              <div className="flex items-start justify-between gap-1">
-                                <span>
-                                  {c.heure_debut?.slice(0, 5)}–{c.heure_fin?.slice(0, 5)}
-                                  <br />
-                                  {c.matieres?.nom || c.libelle}
-                                </span>
-                                <span className="flex flex-col items-end gap-1">
-                                  <Link
-                                    href={`/emploi-du-temps?classe=${classeId}&edit=${c.id}`}
-                                    className="opacity-80 hover:opacity-100"
-                                  >
-                                    ✎
-                                  </Link>
-                                  <form action={supprimerCreneau}>
-                                    <input type="hidden" name="id" value={c.id} />
-                                    <input type="hidden" name="classe_id" value={classeId} />
-                                    <button className="opacity-80 hover:opacity-100" title="Supprimer">✕</button>
-                                  </form>
-                                </span>
-                              </div>
-                            </li>
-                          ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
+          <div className="mb-8 overflow-x-auto">
+            <div className="flex" style={{ minWidth: 760 }}>
+              {/* Axe des horaires */}
+              <div className="relative shrink-0" style={{ width: 46, height: hauteurTotale + 28 }}>
+                {heuresAxe.map((h) => (
+                  <div
+                    key={h}
+                    className="absolute right-1 -translate-y-1/2 text-[10px] text-ardoise-400"
+                    style={{ top: 28 + (h - debutPlage) * PX_PAR_MINUTE }}
+                  >
+                    {minutesVersHeure(h)}
+                  </div>
+                ))}
               </div>
-            ))}
+
+              {JOURS.map((jour, idx) => (
+                <div key={jour} className="min-w-0 flex-1 px-1">
+                  <p className="mb-1 h-6 text-center font-display text-sm text-ardoise-700">{jour}</p>
+                  <div className="flex gap-0.5" style={{ height: hauteurTotale }}>
+                    {colonnes.map((col) => {
+                      const creneauxCol = (creneaux || []).filter(
+                        (c: any) => c.jour === idx + 1 && (c.niveau || "") === col
+                      );
+                      const items = positionnerChevauchements(
+                        creneauxCol.map((c: any) => ({
+                          ...c,
+                          debutMin: heureVersMinutes(c.heure_debut),
+                          finMin: heureVersMinutes(c.heure_fin)
+                        }))
+                      );
+
+                      return (
+                        <div key={col || "commun"} className="relative min-w-0 flex-1">
+                          {multiniveau && (
+                            <p className="mb-0.5 truncate text-center text-[9px] uppercase text-ardoise-400">
+                              {col || "Commun"}
+                            </p>
+                          )}
+                          <div className="relative rounded-sm border border-ardoise-100 bg-white" style={{ height: hauteurTotale, ...fondQuadrillage }}>
+                            {items.map((c: any) => {
+                              const top = (c.debutMin - debutPlage) * PX_PAR_MINUTE;
+                              const hauteur = Math.max((c.finMin - c.debutMin) * PX_PAR_MINUTE, 22);
+                              const largeurPct = 100 / c.totalCols;
+                              const gauchePct = c.col * largeurPct;
+                              const label = c.matieres?.nom || c.libelle || "";
+                              return (
+                                <div
+                                  key={c.id}
+                                  className="absolute overflow-hidden rounded-sm px-1 py-0.5 text-[9px] leading-tight text-white"
+                                  style={{
+                                    top,
+                                    height: hauteur,
+                                    left: `${gauchePct}%`,
+                                    width: `calc(${largeurPct}% - 2px)`,
+                                    backgroundColor: c.matieres?.couleur || "#3f7264"
+                                  }}
+                                  title={`${c.heure_debut?.slice(0, 5)}–${c.heure_fin?.slice(0, 5)} · ${label}`}
+                                >
+                                  <div className="flex items-start justify-between gap-0.5">
+                                    <span className="truncate">
+                                      {c.heure_debut?.slice(0, 5)}–{c.heure_fin?.slice(0, 5)}
+                                      <br />
+                                      {label}
+                                    </span>
+                                    <span className="flex shrink-0 flex-col items-end gap-0.5">
+                                      <Link href={`/emploi-du-temps?classe=${classeId}&edit=${c.id}`} className="opacity-80 hover:opacity-100">
+                                        ✎
+                                      </Link>
+                                      <form action={supprimerCreneau}>
+                                        <input type="hidden" name="id" value={c.id} />
+                                        <input type="hidden" name="classe_id" value={classeId} />
+                                        <button className="opacity-80 hover:opacity-100">✕</button>
+                                      </form>
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="card max-w-md">
@@ -146,7 +212,7 @@ export default async function EmploiDuTempsPage({
                   ))}
                 </select>
               </div>
-              {multiniveau && (
+              {multiniveau && creneauAEditer && (
                 <div>
                   <label className="label">Niveau concerné</label>
                   <select className="input" name="niveau" defaultValue={creneauAEditer?.niveau || ""}>
@@ -155,6 +221,23 @@ export default async function EmploiDuTempsPage({
                       <option key={n} value={n}>{n}</option>
                     ))}
                   </select>
+                </div>
+              )}
+              {multiniveau && !creneauAEditer && (
+                <div>
+                  <label className="label">Niveaux concernés</label>
+                  <p className="mb-1 text-xs text-ardoise-400">
+                    Coche un ou plusieurs niveaux pour créer un créneau identique pour chacun.
+                    Ne rien cocher = commun à toute la classe.
+                  </p>
+                  <div className="flex flex-wrap gap-3">
+                    {niveaux.map((n) => (
+                      <label key={n} className="flex items-center gap-1 text-sm text-ardoise-600">
+                        <input type="checkbox" name="niveaux" value={n} />
+                        {n}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">

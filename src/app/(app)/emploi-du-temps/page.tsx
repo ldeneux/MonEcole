@@ -92,7 +92,7 @@ export default async function EmploiDuTempsPage({
   };
 
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-[1400px]">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-3xl text-ardoise-800">Emploi du temps</h1>
         <ClassSelector classes={classes || []} />
@@ -110,7 +110,7 @@ export default async function EmploiDuTempsPage({
           )}
 
           <div className="mb-8 overflow-x-auto">
-            <div className="flex" style={{ minWidth: 760 }}>
+            <div className="flex" style={{ minWidth: 1100 }}>
               {/* Axe des horaires */}
               <div className="relative shrink-0" style={{ width: 46, height: hauteurTotale + 28 }}>
                 {heuresAxe.map((h) => (
@@ -157,7 +157,7 @@ export default async function EmploiDuTempsPage({
                               return (
                                 <div
                                   key={c.id}
-                                  className="absolute overflow-hidden rounded-sm px-1 py-0.5 text-[9px] leading-tight text-white"
+                                  className="absolute overflow-hidden rounded-sm px-1.5 py-1 text-[10px] leading-tight text-white"
                                   style={{
                                     top,
                                     height: hauteur,
@@ -168,7 +168,7 @@ export default async function EmploiDuTempsPage({
                                   title={`${c.heure_debut?.slice(0, 5)}–${c.heure_fin?.slice(0, 5)} · ${label}`}
                                 >
                                   <div className="flex items-start justify-between gap-0.5">
-                                    <span className="truncate">
+                                    <span className="min-w-0 break-words">
                                       {c.heure_debut?.slice(0, 5)}–{c.heure_fin?.slice(0, 5)}
                                       <br />
                                       {label}

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
+import { positionnerChevauchements, heureVersMinutes, minutesVersHeure } from "@/lib/edt-layout";
 
 const JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
 
@@ -78,7 +79,7 @@ export async function GET(request: Request, { params }: { params: { classeId: st
 
   const { data: creneaux } = await supabase
     .from("emploi_du_temps")
-    .select("jour, heure_debut, heure_fin, libelle, niveau, matieres(nom)")
+    .select("jour, heure_debut, heure_fin, libelle, niveau, matieres(nom, couleur)")
     .eq("classe_id", params.classeId)
     .order("heure_debut");
 
@@ -197,33 +198,90 @@ export async function GET(request: Request, { params }: { params: { classeId: st
     });
   }
 
-  // ========== 6. Emploi du temps ==========
+  // ========== 6. Emploi du temps (reproduction fidèle du planning visuel) ==========
   const s6 = pptx.addSlide();
   s6.background = { color: COULEUR_FOND };
   titreSlide(s6, "L'emploi du temps de la semaine");
 
-  const largeurColonne = 9 / 5;
+  const niveauxClasse: string[] = classe.niveaux || [];
+  const multiniveauEdt = niveauxClasse.length > 1;
+  const colonnesNiveau = multiniveauEdt ? [...niveauxClasse, ""] : [""];
+
+  const debutsEdt = (creneaux || []).map((c: any) => heureVersMinutes(c.heure_debut));
+  const finsEdt = (creneaux || []).map((c: any) => heureVersMinutes(c.heure_fin));
+  let debutPlage = debutsEdt.length ? Math.min(...debutsEdt) : 8 * 60;
+  let finPlage = finsEdt.length ? Math.max(...finsEdt) : 18 * 60;
+  debutPlage = Math.floor(debutPlage / 60) * 60;
+  finPlage = Math.ceil(finPlage / 60) * 60;
+  if (finPlage <= debutPlage) finPlage = debutPlage + 60;
+
+  const zoneY = 1.25;
+  const zoneHauteur = 3.95;
+  const inParMinute = zoneHauteur / (finPlage - debutPlage);
+
+  const axeX = 0.15;
+  const axeLargeur = 0.5;
+  const grilleX = axeX + axeLargeur;
+  const grilleLargeur = 9.7 - grilleX;
+  const largeurJour = grilleLargeur / 5;
+
+  // Graduations horaires (toutes les heures) + lignes de fond
+  for (let h = debutPlage; h <= finPlage; h += 60) {
+    const y = zoneY + (h - debutPlage) * inParMinute;
+    s6.addText(minutesVersHeure(h), {
+      x: axeX, y: y - 0.08, w: axeLargeur, h: 0.16, fontSize: 7, color: COULEUR_TEXTE, align: "right", valign: "middle"
+    });
+    s6.addShape("line", {
+      x: grilleX, y, w: grilleLargeur, h: 0, line: { color: "E5E0D8", width: 0.75 }
+    });
+  }
+
   JOURS.forEach((jour, idx) => {
-    const x = 0.5 + idx * largeurColonne;
+    const xJour = grilleX + idx * largeurJour;
     s6.addText(jour, {
-      x, y: 1.05, w: largeurColonne - 0.1, h: 0.35, fontSize: 13, bold: true, color: COULEUR_ACCENT, align: "center"
+      x: xJour, y: zoneY - 0.32, w: largeurJour - 0.05, h: 0.24, fontSize: 10, bold: true, color: COULEUR_ACCENT, align: "center"
     });
 
-    const creneauxJour = (creneaux || []).filter((c: any) => c.jour === idx + 1);
-    const texte =
-      creneauxJour.length > 0
-        ? creneauxJour.map((c: any) => {
-            const label = c.matieres?.nom || c.libelle || "";
-            const niveauSuffixe = c.niveau ? ` (${c.niveau})` : "";
-            return {
-              text: `${c.heure_debut?.slice(0, 5)}–${c.heure_fin?.slice(0, 5)}\n${label}${niveauSuffixe}`,
-              options: { breakLine: true }
-            };
-          })
-        : [{ text: "—", options: {} }];
+    colonnesNiveau.forEach((col, colIdx) => {
+      const creneauxCol = (creneaux || []).filter((c: any) => c.jour === idx + 1 && (c.niveau || "") === col);
+      if (creneauxCol.length === 0) return;
 
-    s6.addText(texte, {
-      x, y: 1.45, w: largeurColonne - 0.1, h: 3.6, fontSize: 9, color: COULEUR_TEXTE, valign: "top"
+      if (multiniveauEdt) {
+        s6.addText(col || "Commun", {
+          x: xJour + colIdx * ((largeurJour - 0.05) / colonnesNiveau.length),
+          y: zoneY - 0.05, w: (largeurJour - 0.05) / colonnesNiveau.length, h: 0.14,
+          fontSize: 5.5, color: COULEUR_TEXTE, align: "center"
+        });
+      }
+
+      const items = positionnerChevauchements(
+        creneauxCol.map((c: any) => ({
+          ...c,
+          debutMin: heureVersMinutes(c.heure_debut),
+          finMin: heureVersMinutes(c.heure_fin)
+        }))
+      );
+
+      const largeurNiveau = (largeurJour - 0.05) / colonnesNiveau.length;
+      const xNiveau = xJour + colIdx * largeurNiveau;
+
+      items.forEach((c: any) => {
+        const y = zoneY + (c.debutMin - debutPlage) * inParMinute;
+        const h = Math.max((c.finMin - c.debutMin) * inParMinute, 0.16);
+        const largeurBloc = Math.max(largeurNiveau / c.totalCols - 0.015, 0.05);
+        const xBloc = xNiveau + c.col * (largeurNiveau / c.totalCols);
+        const couleurHex = (c.matieres?.couleur || "#3f7264").replace("#", "");
+        const label = c.matieres?.nom || c.libelle || "";
+        const niveauSuffixe = c.niveau && !multiniveauEdt ? ` (${c.niveau})` : "";
+
+        s6.addShape("rect", {
+          x: xBloc, y, w: largeurBloc, h, fill: { color: couleurHex }, line: { type: "none" }
+        });
+        s6.addText(`${c.heure_debut?.slice(0, 5)}\n${label}${niveauSuffixe}`, {
+          x: xBloc + 0.02, y: y + 0.01, w: Math.max(largeurBloc - 0.04, 0.05), h: Math.max(h - 0.02, 0.05),
+          fontSize: 5.5, color: "FFFFFF", valign: "top", margin: 0, lineSpacingMultiple: 0.95
+        });
+      });
     });
   });
 

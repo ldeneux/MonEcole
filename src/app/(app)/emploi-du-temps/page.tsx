@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getAnneeActive } from "@/lib/annee-active";
+import { getContexteUtilisateur } from "@/lib/contexte-utilisateur";
 import ClassSelector from "@/components/ClassSelector";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -51,12 +52,29 @@ export default async function EmploiDuTempsPage({
   searchParams: { classe?: string; edit?: string };
 }) {
   const supabase = createClient();
-  const { active } = await getAnneeActive();
-  const { data: classes } = active
-    ? await supabase.from("classes").select("id, nom, niveaux").eq("annee_id", active.id).order("nom")
-    : { data: [] };
-  const classeId = searchParams.classe || classes?.[0]?.id;
-  const classeActuelle = classes?.find((c) => c.id === classeId);
+  const contexte = await getContexteUtilisateur();
+  const estEleve = contexte.role === "eleve";
+
+  let classes: any[] = [];
+  let classeId: string | undefined;
+  let classeActuelle: any = null;
+
+  if (estEleve) {
+    classeId = contexte.classeId || undefined;
+    if (classeId) {
+      const { data } = await supabase.from("classes").select("id, nom, niveaux").eq("id", classeId).single();
+      classeActuelle = data;
+    }
+  } else {
+    const { active } = await getAnneeActive();
+    const { data: classesData } = active
+      ? await supabase.from("classes").select("id, nom, niveaux").eq("annee_id", active.id).order("nom")
+      : { data: [] };
+    classes = classesData || [];
+    classeId = searchParams.classe || classes?.[0]?.id;
+    classeActuelle = classes.find((c) => c.id === classeId);
+  }
+
   const niveaux: string[] = classeActuelle?.niveaux || [];
   const multiniveau = niveaux.length > 1;
 
@@ -70,7 +88,7 @@ export default async function EmploiDuTempsPage({
         .order("heure_debut")
     : { data: [] };
 
-  const creneauAEditer = searchParams.edit ? creneaux?.find((c: any) => c.id === searchParams.edit) : null;
+  const creneauAEditer = !estEleve && searchParams.edit ? creneaux?.find((c: any) => c.id === searchParams.edit) : null;
   const colonnes = multiniveau ? [...niveaux, ""] : [""]; // "" = commun / classe entière
 
   // ---------- Calcul de la plage horaire affichée (arrondie à l'heure) ----------
@@ -95,10 +113,11 @@ export default async function EmploiDuTempsPage({
     <div className="max-w-[1400px]">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-3xl text-ardoise-800">Emploi du temps</h1>
-        <ClassSelector classes={classes || []} />
+        {!estEleve && <ClassSelector classes={classes || []} />}
       </div>
 
-      {!classeId && <p className="text-sm text-ardoise-400">Crée d'abord une classe.</p>}
+      {!classeId && !estEleve && <p className="text-sm text-ardoise-400">Crée d'abord une classe.</p>}
+      {!classeId && estEleve && <p className="text-sm text-ardoise-400">Tu n'es affecté·e à aucune classe pour l'instant.</p>}
 
       {classeId && (
         <>
@@ -174,14 +193,18 @@ export default async function EmploiDuTempsPage({
                                       {label}
                                     </span>
                                     <span className="flex shrink-0 flex-col items-end gap-0.5">
-                                      <Link href={`/emploi-du-temps?classe=${classeId}&edit=${c.id}`} className="opacity-80 hover:opacity-100">
-                                        ✎
-                                      </Link>
-                                      <form action={supprimerCreneau}>
-                                        <input type="hidden" name="id" value={c.id} />
-                                        <input type="hidden" name="classe_id" value={classeId} />
-                                        <button className="opacity-80 hover:opacity-100">✕</button>
-                                      </form>
+                                      {!estEleve && (
+                                        <>
+                                          <Link href={`/emploi-du-temps?classe=${classeId}&edit=${c.id}`} className="opacity-80 hover:opacity-100">
+                                            ✎
+                                          </Link>
+                                          <form action={supprimerCreneau}>
+                                            <input type="hidden" name="id" value={c.id} />
+                                            <input type="hidden" name="classe_id" value={classeId} />
+                                            <button className="opacity-80 hover:opacity-100">✕</button>
+                                          </form>
+                                        </>
+                                      )}
                                     </span>
                                   </div>
                                 </div>
@@ -197,6 +220,7 @@ export default async function EmploiDuTempsPage({
             </div>
           </div>
 
+          {!estEleve && (
           <div className="card max-w-md">
             <h2 className="mb-3 font-display text-lg text-ardoise-700">
               {creneauAEditer ? "Modifier le créneau" : "Ajouter un créneau"}
@@ -278,6 +302,7 @@ export default async function EmploiDuTempsPage({
               </div>
             </form>
           </div>
+          )}
         </>
       )}
     </div>

@@ -169,8 +169,8 @@ export default async function CoinLecturePage({
                 <p className="text-xs text-ardoise-500">{l.auteur}</p>
                 <form action={emprunter} className="mt-2">
                   <input type="hidden" name="livre_id" value={l.id} />
-                  <input type="hidden" name="classe_id" value={contexte.classeId} />
-                  <input type="hidden" name="eleve_id" value={contexte.eleveId} />
+                  <input type="hidden" name="classe_id" value={contexte.classeId ?? ""} />
+                  <input type="hidden" name="eleve_id" value={contexte.eleveId ?? ""} />
                   <input type="hidden" name="date_emprunt" value={new Date().toISOString().slice(0, 10)} />
                   <button
                     className="btn-ghost border border-ardoise-200 text-xs"
@@ -202,7 +202,7 @@ export default async function CoinLecturePage({
                 ) : (
                   <form action={retourner}>
                     <input type="hidden" name="emprunt_id" value={e.id} />
-                    <input type="hidden" name="classe_id" value={contexte.classeId} />
+                    <input type="hidden" name="classe_id" value={contexte.classeId ?? ""} />
                     <button className="underline" type="submit">Marquer comme rendu</button>
                   </form>
                 )}

@@ -1,369 +1,430 @@
 import { createClient } from "@/lib/supabase/server";
+import { getAnneeActive } from "@/lib/annee-active";
+import { getContexteUtilisateur } from "@/lib/contexte-utilisateur";
+import ClassSelector from "@/components/ClassSelector";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
-const LIENS = ["mère", "père", "tuteur", "tutrice", "parent", "autre"];
-
-async function modifierEleve(formData: FormData) {
+async function ajouterLivre(formData: FormData) {
   "use server";
   const supabase = createClient();
-  await supabase
-    .from("eleves")
-    .update({
-      nom: formData.get("nom") as string,
-      prenom: formData.get("prenom") as string,
-      date_naissance: (formData.get("date_naissance") as string) || null,
-      sexe: (formData.get("sexe") as string) || null
-    })
-    .eq("id", formData.get("eleve_id") as string);
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
-
-async function supprimerEleve(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  await supabase.from("eleves").delete().eq("id", formData.get("eleve_id") as string);
-  redirect("/eleves");
-}
-
-async function ajouterAffectation(formData: FormData) {
-  "use server";
-  const supabase = createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
   const classe_id = formData.get("classe_id") as string;
-  const supabaseAdmin = supabase;
-  const { data: classe } = await supabaseAdmin.from("classes").select("annee_id").eq("id", classe_id).single();
-  await supabase.from("affectations").upsert(
-    {
-      eleve_id: formData.get("eleve_id") as string,
-      classe_id,
-      annee_id: classe?.annee_id,
-      niveau: (formData.get("niveau") as string) || null
-    },
-    { onConflict: "eleve_id,annee_id" }
-  );
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
+  const isbn = (formData.get("isbn") as string)?.replace(/[^0-9Xx]/g, "");
+  let titre = (formData.get("titre") as string) || "";
+  let auteur = (formData.get("auteur") as string) || "";
+  let resume = "";
+  let couverture_url = "";
 
-async function supprimerAffectation(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  await supabase.from("affectations").delete().eq("id", formData.get("affectation_id") as string);
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
-
-async function creerEtLierContact(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  const { data: contact } = await supabase
-    .from("contacts")
-    .insert({
-      nom: formData.get("nom") as string,
-      prenom: formData.get("prenom") as string,
-      telephone: (formData.get("telephone") as string) || null,
-      email: (formData.get("email") as string) || null,
-      adresse: (formData.get("adresse") as string) || null,
-      created_by: user?.id
-    })
-    .select()
-    .single();
-
-  if (contact) {
-    await supabase.from("eleve_contacts").insert({
-      eleve_id: formData.get("eleve_id") as string,
-      contact_id: contact.id,
-      lien: formData.get("lien") as string,
-      contact_principal: formData.get("contact_principal") === "on"
-    });
+  if (isbn) {
+    try {
+      const res = await fetch(
+        `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,
+        { cache: "no-store" }
+      );
+      const data = await res.json();
+      const info = data[`ISBN:${isbn}`];
+      if (info) {
+        titre = titre || info.title || "";
+        auteur = auteur || info.authors?.map((a: any) => a.name).join(", ") || "";
+        resume = info.excerpts?.[0]?.text || info.notes || "";
+        couverture_url = info.cover?.medium || "";
+      }
+    } catch {
+      // Si l'API est indisponible, on garde les champs saisis manuellement.
+    }
   }
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
 
-async function delierContact(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  await supabase.from("eleve_contacts").delete().eq("id", formData.get("lien_id") as string);
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
+  if (!titre) {
+    redirect(
+      `/coin-lecture?classe=${classe_id}&error=${encodeURIComponent(
+        "Aucune information trouvée pour cet ISBN — renseigne le titre manuellement."
+      )}`
+    );
+  }
 
-async function ajouterAbsence(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-  await supabase.from("absences").insert({
-    eleve_id: formData.get("eleve_id") as string,
-    date: formData.get("date") as string,
-    motif: (formData.get("motif") as string) || null,
+  await supabase.from("livres").insert({
+    classe_id,
+    isbn: isbn || null,
+    titre,
+    auteur: auteur || null,
+    resume: resume || null,
+    couverture_url: couverture_url || null,
     created_by: user?.id
   });
-  redirect(`/eleves/${formData.get("eleve_id")}`);
+
+  redirect(`/coin-lecture?classe=${classe_id}`);
 }
 
-async function supprimerAbsence(formData: FormData) {
-  "use server";
-  const supabase = createClient();
-  await supabase.from("absences").delete().eq("id", formData.get("absence_id") as string);
-  redirect(`/eleves/${formData.get("eleve_id")}`);
-}
-
-async function modifierContact(formData: FormData) {
+async function modifierLivre(formData: FormData) {
   "use server";
   const supabase = createClient();
   await supabase
-    .from("contacts")
+    .from("livres")
     .update({
-      nom: formData.get("nom") as string,
-      prenom: formData.get("prenom") as string,
-      telephone: (formData.get("telephone") as string) || null,
-      email: (formData.get("email") as string) || null,
-      adresse: (formData.get("adresse") as string) || null
+      titre: formData.get("titre") as string,
+      auteur: (formData.get("auteur") as string) || null
     })
-    .eq("id", formData.get("contact_id") as string);
-  await supabase
-    .from("eleve_contacts")
-    .update({
-      lien: formData.get("lien") as string,
-      contact_principal: formData.get("contact_principal") === "on"
-    })
-    .eq("id", formData.get("lien_id") as string);
-  redirect(`/eleves/${formData.get("eleve_id")}`);
+    .eq("id", formData.get("id") as string);
+  redirect(`/coin-lecture?classe=${formData.get("classe_id")}`);
 }
 
-export default async function EleveDetailPage({
-  params,
+async function supprimerLivre(formData: FormData) {
+  "use server";
+  const supabase = createClient();
+  await supabase.from("livres").delete().eq("id", formData.get("id") as string);
+  redirect(`/coin-lecture?classe=${formData.get("classe_id")}`);
+}
+
+async function emprunter(formData: FormData) {
+  "use server";
+  const supabase = createClient();
+  const { error } = await supabase.from("emprunts").insert({
+    livre_id: formData.get("livre_id") as string,
+    eleve_id: formData.get("eleve_id") as string,
+    date_emprunt: formData.get("date_emprunt") as string
+  });
+  if (error) {
+    // Le plus souvent : quelqu'un d'autre vient d'emprunter ce livre entre-temps
+    redirect(
+      `/coin-lecture?classe=${formData.get("classe_id")}&error=${encodeURIComponent(
+        "Ce livre vient peut-être d'être emprunté par quelqu'un d'autre — réessaie."
+      )}`
+    );
+  }
+  redirect(`/coin-lecture?classe=${formData.get("classe_id")}`);
+}
+
+async function retourner(formData: FormData) {
+  "use server";
+  const supabase = createClient();
+  await supabase
+    .from("emprunts")
+    .update({ date_retour: new Date().toISOString().slice(0, 10) })
+    .eq("id", formData.get("emprunt_id") as string);
+  redirect(`/coin-lecture?classe=${formData.get("classe_id")}`);
+}
+
+const COLONNES_TRI: Record<string, string> = {
+  eleve: "Élève",
+  livre: "Livre",
+  date_emprunt: "Date d'emprunt",
+  date_retour: "Date de retour"
+};
+
+export default async function CoinLecturePage({
   searchParams
 }: {
-  params: { id: string };
-  searchParams: { editcontact?: string };
+  searchParams: { classe?: string; error?: string; edit?: string; q?: string; tri?: string; dir?: string };
 }) {
   const supabase = createClient();
-  const { data: eleve } = await supabase.from("eleves").select("*").eq("id", params.id).single();
-  if (!eleve) redirect("/eleves");
+  const contexte = await getContexteUtilisateur();
+  const estEleve = contexte.role === "eleve";
 
-  const { data: classes } = await supabase
-    .from("classes")
-    .select("id, nom, niveaux, annees_scolaires(libelle)")
-    .order("nom");
+  // ================= VUE ÉLÈVE =================
+  if (estEleve) {
+    if (!contexte.classeId) {
+      return (
+        <div className="max-w-3xl">
+          <h1 className="mb-6 font-display text-3xl text-ardoise-800">Coin lecture</h1>
+          <p className="text-sm text-ardoise-400">Tu n'es affecté·e à aucune classe pour l'instant.</p>
+        </div>
+      );
+    }
 
-  const { data: affectations } = await supabase
-    .from("affectations")
-    .select("id, niveau, classes(id, nom, niveaux), annees_scolaires(libelle)")
-    .eq("eleve_id", params.id)
-    .order("created_at", { ascending: false });
+    const { data: livres } = await supabase
+      .from("livres")
+      .select("id, titre, auteur, couverture_url, emprunts(id, eleve_id, date_emprunt, date_retour)")
+      .eq("classe_id", contexte.classeId)
+      .order("titre");
 
-  const { data: contacts } = await supabase
-    .from("eleve_contacts")
-    .select("id, lien, contact_principal, contacts(id, nom, prenom, telephone, email, adresse)")
-    .eq("eleve_id", params.id);
+    const { data: mesEmprunts } = await supabase
+      .from("emprunts")
+      .select("id, date_emprunt, date_retour, livres(titre, auteur)")
+      .eq("eleve_id", contexte.eleveId)
+      .order("date_emprunt", { ascending: false });
 
-  const { data: absences } = await supabase
-    .from("absences")
-    .select("id, date, motif")
-    .eq("eleve_id", params.id)
-    .order("date", { ascending: false });
+    const disponibles = (livres || []).filter((l: any) => !l.emprunts?.some((e: any) => !e.date_retour));
+    const empruntEnCoursParMoi = (livres || []).find((l: any) =>
+      l.emprunts?.some((e: any) => !e.date_retour && e.eleve_id === contexte.eleveId)
+    );
+
+    return (
+      <div className="max-w-3xl">
+        <h1 className="mb-6 font-display text-3xl text-ardoise-800">Coin lecture</h1>
+
+        {searchParams.error && (
+          <p className="mb-6 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{searchParams.error}</p>
+        )}
+
+        <h2 className="mb-3 font-display text-lg text-ardoise-700">Livres disponibles ({disponibles.length})</h2>
+        <div className="mb-8 grid gap-3 sm:grid-cols-2">
+          {disponibles.map((l: any) => (
+            <div key={l.id} className="card flex gap-3">
+              {l.couverture_url && <img src={l.couverture_url} alt={l.titre} className="h-20 w-14 rounded object-cover" />}
+              <div className="flex-1">
+                <p className="text-sm font-medium text-ardoise-800">{l.titre}</p>
+                <p className="text-xs text-ardoise-500">{l.auteur}</p>
+                <form action={emprunter} className="mt-2">
+                  <input type="hidden" name="livre_id" value={l.id} />
+                  <input type="hidden" name="classe_id" value={contexte.classeId} />
+                  <input type="hidden" name="eleve_id" value={contexte.eleveId} />
+                  <input type="hidden" name="date_emprunt" value={new Date().toISOString().slice(0, 10)} />
+                  <button
+                    className="btn-ghost border border-ardoise-200 text-xs"
+                    type="submit"
+                    disabled={!!empruntEnCoursParMoi}
+                    title={empruntEnCoursParMoi ? "Rends ton livre en cours avant d'en emprunter un autre" : ""}
+                  >
+                    Emprunter
+                  </button>
+                </form>
+              </div>
+            </div>
+          ))}
+          {disponibles.length === 0 && <p className="text-sm text-ardoise-400">Aucun livre disponible pour l'instant.</p>}
+        </div>
+
+        <h2 className="mb-3 font-display text-lg text-ardoise-700">Mon historique</h2>
+        <div className="space-y-2">
+          {mesEmprunts?.map((e: any) => (
+            <div key={e.id} className="card flex items-center justify-between text-sm">
+              <div>
+                <p className="font-medium text-ardoise-800">{e.livres?.titre}</p>
+                <p className="text-xs text-ardoise-400">{e.livres?.auteur}</p>
+              </div>
+              <div className="text-right text-xs text-ardoise-500">
+                <p>Emprunté le {new Date(e.date_emprunt).toLocaleDateString("fr-FR")}</p>
+                {e.date_retour ? (
+                  <p>Rendu le {new Date(e.date_retour).toLocaleDateString("fr-FR")}</p>
+                ) : (
+                  <form action={retourner}>
+                    <input type="hidden" name="emprunt_id" value={e.id} />
+                    <input type="hidden" name="classe_id" value={contexte.classeId} />
+                    <button className="underline" type="submit">Marquer comme rendu</button>
+                  </form>
+                )}
+              </div>
+            </div>
+          ))}
+          {(!mesEmprunts || mesEmprunts.length === 0) && (
+            <p className="text-sm text-ardoise-400">Tu n'as encore emprunté aucun livre.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ================= VUE PERSONNEL (admin / professeur) =================
+  const { active } = await getAnneeActive();
+  const { data: classes } = active
+    ? await supabase.from("classes").select("id, nom").eq("annee_id", active.id).order("nom")
+    : { data: [] };
+  const classeId = searchParams.classe || classes?.[0]?.id;
+
+  const { data: affectationsClasse } = classeId
+    ? await supabase.from("affectations").select("eleves(id, nom, prenom)").eq("classe_id", classeId).order("id")
+    : { data: [] };
+  const eleves = (affectationsClasse || [])
+    .map((a: any) => a.eleves)
+    .filter(Boolean)
+    .sort((a: any, b: any) => (a.nom > b.nom ? 1 : -1));
+
+  const { data: livres } = classeId
+    ? await supabase
+        .from("livres")
+        .select("id, isbn, titre, auteur, resume, couverture_url, emprunts(id, eleve_id, date_emprunt, date_retour, eleves(prenom, nom))")
+        .eq("classe_id", classeId)
+        .order("titre")
+    : { data: [] };
+
+  // ---- Historique complet des emprunts de la classe, filtrable et triable ----
+  const { data: empruntsBruts } = classeId
+    ? await supabase
+        .from("emprunts")
+        .select("id, date_emprunt, date_retour, eleves(prenom, nom), livres!inner(titre, auteur, classe_id)")
+        .eq("livres.classe_id", classeId)
+    : { data: [] };
+
+  const recherche = (searchParams.q || "").toLowerCase().trim();
+  let historique = (empruntsBruts || []).filter((e: any) => {
+    if (!recherche) return true;
+    const eleveNom = `${e.eleves?.prenom} ${e.eleves?.nom}`.toLowerCase();
+    const livreTitre = (e.livres?.titre || "").toLowerCase();
+    return eleveNom.includes(recherche) || livreTitre.includes(recherche);
+  });
+
+  const tri = searchParams.tri || "date_emprunt";
+  const dir = searchParams.dir === "asc" ? "asc" : "desc";
+  historique = [...historique].sort((a: any, b: any) => {
+    let va: string, vb: string;
+    if (tri === "eleve") { va = `${a.eleves?.prenom} ${a.eleves?.nom}`; vb = `${b.eleves?.prenom} ${b.eleves?.nom}`; }
+    else if (tri === "livre") { va = a.livres?.titre || ""; vb = b.livres?.titre || ""; }
+    else if (tri === "date_retour") { va = a.date_retour || ""; vb = b.date_retour || ""; }
+    else { va = a.date_emprunt || ""; vb = b.date_emprunt || ""; }
+    const cmp = va.localeCompare(vb);
+    return dir === "asc" ? cmp : -cmp;
+  });
+
+  function lienTri(colonne: string) {
+    const nouvelleDir = tri === colonne && dir === "asc" ? "desc" : "asc";
+    const params = new URLSearchParams();
+    if (classeId) params.set("classe", classeId);
+    if (searchParams.q) params.set("q", searchParams.q);
+    params.set("tri", colonne);
+    params.set("dir", nouvelleDir);
+    return `/coin-lecture?${params.toString()}`;
+  }
 
   return (
-    <div className="max-w-3xl">
-      <h1 className="mb-6 font-display text-3xl text-ardoise-800">{eleve.prenom} {eleve.nom}</h1>
+    <div className="max-w-4xl">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="font-display text-3xl text-ardoise-800">Coin lecture</h1>
+        <ClassSelector classes={classes || []} />
+      </div>
 
-      <div className="mb-6 grid gap-6 md:grid-cols-2">
-        <div className="card">
-          <h2 className="mb-3 font-display text-lg text-ardoise-700">Informations</h2>
-          <form action={modifierEleve} className="space-y-3">
-            <input type="hidden" name="eleve_id" value={eleve.id} />
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Prénom</label>
-                <input className="input" name="prenom" defaultValue={eleve.prenom} required />
-              </div>
-              <div>
-                <label className="label">Nom</label>
-                <input className="input" name="nom" defaultValue={eleve.nom} required />
-              </div>
+      {searchParams.error && (
+        <p className="mb-6 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{searchParams.error}</p>
+      )}
+
+      {classeId && (
+        <div className="mb-8 card max-w-md">
+          <h2 className="mb-3 font-display text-lg text-ardoise-700">Ajouter un livre</h2>
+          <form action={ajouterLivre} className="space-y-4">
+            <input type="hidden" name="classe_id" value={classeId} />
+            <div>
+              <label className="label">ISBN (recherche automatique du titre/auteur)</label>
+              <input className="input" name="isbn" placeholder="ex. 9782070612758" />
             </div>
             <div>
-              <label className="label">Date de naissance</label>
-              <input className="input" type="date" name="date_naissance" defaultValue={eleve.date_naissance || ""} />
+              <label className="label">Titre (si pas trouvé automatiquement)</label>
+              <input className="input" name="titre" />
             </div>
             <div>
-              <label className="label">Sexe</label>
-              <select className="input" name="sexe" defaultValue={eleve.sexe || ""}>
-                <option value="">Non renseigné</option>
-                <option value="M">Garçon</option>
-                <option value="F">Fille</option>
-              </select>
+              <label className="label">Auteur</label>
+              <input className="input" name="auteur" />
             </div>
-            <div className="flex gap-2">
-              <button className="btn-primary text-sm" type="submit">Enregistrer</button>
-              <form action={supprimerEleve}>
-                <input type="hidden" name="eleve_id" value={eleve.id} />
-                <button className="btn-ghost border border-red-200 text-sm text-red-600" type="submit">
-                  Supprimer l'élève
-                </button>
-              </form>
-            </div>
+            <button className="btn-primary w-full" type="submit">Ajouter au catalogue</button>
           </form>
         </div>
+      )}
 
-        <div className="card">
-          <h2 className="mb-3 font-display text-lg text-ardoise-700">Affectations (classe par année)</h2>
-          <ul className="mb-3 space-y-2 text-sm">
-            {affectations?.map((a: any) => (
-              <li key={a.id} className="flex items-center justify-between">
-                <span>
-                  {a.classes?.nom}{a.niveau ? ` (${a.niveau})` : ""} — {a.annees_scolaires?.libelle}
-                </span>
-                <form action={supprimerAffectation}>
-                  <input type="hidden" name="affectation_id" value={a.id} />
-                  <input type="hidden" name="eleve_id" value={eleve.id} />
-                  <button className="text-xs text-red-500 underline" type="submit">Retirer</button>
-                </form>
-              </li>
-            ))}
-            {(!affectations || affectations.length === 0) && (
-              <li className="text-ardoise-400">Aucune affectation.</li>
-            )}
-          </ul>
-          <form action={ajouterAffectation} className="space-y-2">
-            <input type="hidden" name="eleve_id" value={eleve.id} />
-            <select className="input text-sm" name="classe_id" required>
-              <option value="">Affecter à une classe…</option>
-              {classes?.map((c: any) => (
-                <option key={c.id} value={c.id}>{c.nom} ({c.annees_scolaires?.libelle})</option>
+      <h2 className="mb-3 font-display text-lg text-ardoise-700">Catalogue ({livres?.length ?? 0})</h2>
+      <div className="mb-10 grid gap-4 sm:grid-cols-2">
+        {livres?.map((l: any) => {
+          const empruntEnCours = l.emprunts?.find((e: any) => !e.date_retour);
+          if (searchParams.edit === l.id) {
+            return (
+              <form key={l.id} action={modifierLivre} className="card space-y-2">
+                <input type="hidden" name="id" value={l.id} />
+                <input type="hidden" name="classe_id" value={classeId} />
+                <input className="input text-sm" name="titre" defaultValue={l.titre} required />
+                <input className="input text-sm" name="auteur" defaultValue={l.auteur || ""} placeholder="Auteur" />
+                <div className="flex gap-2">
+                  <button className="btn-primary text-xs" type="submit">Enregistrer</button>
+                  <a href={`/coin-lecture?classe=${classeId}`} className="btn-ghost border border-ardoise-200 text-xs">Annuler</a>
+                </div>
+              </form>
+            );
+          }
+          return (
+            <div key={l.id} className="card flex gap-3">
+              {l.couverture_url && (
+                <img src={l.couverture_url} alt={l.titre} className="h-24 w-16 rounded object-cover" />
+              )}
+              <div className="flex-1">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-medium text-ardoise-800">{l.titre}</p>
+                    <p className="text-xs text-ardoise-500">{l.auteur}</p>
+                  </div>
+                  <div className="flex gap-2 text-xs shrink-0">
+                    <a href={`/coin-lecture?classe=${classeId}&edit=${l.id}`} className="text-ardoise-600 underline">Modifier</a>
+                    <form action={supprimerLivre}>
+                      <input type="hidden" name="id" value={l.id} />
+                      <input type="hidden" name="classe_id" value={classeId} />
+                      <button className="text-red-500 underline" type="submit">Suppr.</button>
+                    </form>
+                  </div>
+                </div>
+                {empruntEnCours ? (
+                  <div className="mt-2 text-xs">
+                    <p className="text-corail">
+                      Emprunté par {empruntEnCours.eleves?.prenom} {empruntEnCours.eleves?.nom} le{" "}
+                      {new Date(empruntEnCours.date_emprunt).toLocaleDateString("fr-FR")}
+                    </p>
+                    <form action={retourner}>
+                      <input type="hidden" name="emprunt_id" value={empruntEnCours.id} />
+                      <input type="hidden" name="classe_id" value={classeId} />
+                      <button className="mt-1 text-xs underline text-ardoise-600" type="submit">
+                        Marquer comme rendu
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  <form action={emprunter} className="mt-2 flex items-center gap-2">
+                    <input type="hidden" name="livre_id" value={l.id} />
+                    <input type="hidden" name="classe_id" value={classeId} />
+                    <input type="hidden" name="date_emprunt" value={new Date().toISOString().slice(0, 10)} />
+                    <select className="input text-xs" name="eleve_id" required>
+                      <option value="">Emprunter à…</option>
+                      {eleves?.map((e) => (
+                        <option key={e.id} value={e.id}>{e.prenom} {e.nom}</option>
+                      ))}
+                    </select>
+                    <button className="btn-ghost border border-ardoise-200 text-xs" type="submit">OK</button>
+                  </form>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <h2 className="mb-3 font-display text-lg text-ardoise-700">
+        Historique des emprunts — tous les élèves ({historique.length})
+      </h2>
+      <form action="/coin-lecture" method="get" className="mb-3">
+        <input type="hidden" name="classe" value={classeId} />
+        <input type="hidden" name="tri" value={tri} />
+        <input type="hidden" name="dir" value={dir} />
+        <input className="input max-w-sm" name="q" placeholder="Filtrer par élève ou titre…" defaultValue={searchParams.q} />
+      </form>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-ardoise-200 text-left text-xs uppercase text-ardoise-400">
+              {Object.entries(COLONNES_TRI).map(([cle, label]) => (
+                <th key={cle} className="py-2 pr-3">
+                  <a href={lienTri(cle)} className="hover:text-ardoise-700">
+                    {label} {tri === cle ? (dir === "asc" ? "▲" : "▼") : ""}
+                  </a>
+                </th>
               ))}
-            </select>
-            <input className="input text-sm" name="niveau" placeholder="Niveau précis (ex. CE1, si classe multi-niveaux)" />
-            <button className="btn-ghost border border-ardoise-200 text-sm w-full" type="submit">
-              Affecter / mettre à jour pour cette année
-            </button>
-          </form>
-        </div>
-      </div>
-
-      <div className="mb-6 card">
-        <h2 className="mb-3 font-display text-lg text-ardoise-700">Contacts (parents, tuteurs…)</h2>
-        <ul className="mb-4 space-y-2 text-sm">
-          {contacts?.map((c: any) =>
-            searchParams.editcontact === c.id ? (
-              <li key={c.id}>
-                <form action={modifierContact} className="card space-y-2">
-                  <input type="hidden" name="lien_id" value={c.id} />
-                  <input type="hidden" name="contact_id" value={c.contacts?.id} />
-                  <input type="hidden" name="eleve_id" value={eleve.id} />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input className="input text-sm" name="prenom" defaultValue={c.contacts?.prenom} required />
-                    <input className="input text-sm" name="nom" defaultValue={c.contacts?.nom} required />
-                  </div>
-                  <select className="input text-sm" name="lien" defaultValue={c.lien}>
-                    {LIENS.map((l) => (
-                      <option key={l} value={l}>{l}</option>
-                    ))}
-                  </select>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input className="input text-sm" name="telephone" defaultValue={c.contacts?.telephone || ""} placeholder="Téléphone" />
-                    <input className="input text-sm" type="email" name="email" defaultValue={c.contacts?.email || ""} placeholder="Email" />
-                  </div>
-                  <input className="input text-sm" name="adresse" defaultValue={c.contacts?.adresse || ""} placeholder="Adresse" />
-                  <label className="flex items-center gap-2 text-xs text-ardoise-600">
-                    <input type="checkbox" name="contact_principal" defaultChecked={c.contact_principal} /> Contact principal
-                  </label>
-                  <div className="flex gap-2">
-                    <button className="btn-primary text-xs" type="submit">Enregistrer</button>
-                    <a href={`/eleves/${eleve.id}`} className="btn-ghost border border-ardoise-200 text-xs">Annuler</a>
-                  </div>
-                </form>
-              </li>
-            ) : (
-            <li key={c.id} className="flex items-center justify-between">
-              <span>
-                <strong>{c.lien}</strong>{c.contact_principal ? " · principal" : ""} — {c.contacts?.prenom} {c.contacts?.nom}
-                {c.contacts?.telephone ? ` · ${c.contacts.telephone}` : ""}
-                {c.contacts?.email ? ` · ${c.contacts.email}` : ""}
-              </span>
-              <span className="flex gap-2 text-xs">
-                <a href={`/eleves/${eleve.id}?editcontact=${c.id}`} className="text-ardoise-600 underline">Modifier</a>
-                <form action={delierContact}>
-                  <input type="hidden" name="lien_id" value={c.id} />
-                  <input type="hidden" name="eleve_id" value={eleve.id} />
-                  <button className="text-red-500 underline" type="submit">Retirer</button>
-                </form>
-              </span>
-            </li>
-            )
-          )}
-          {(!contacts || contacts.length === 0) && (
-            <li className="text-ardoise-400">Aucun contact enregistré.</li>
-          )}
-        </ul>
-        <details>
-          <summary className="cursor-pointer text-sm text-ardoise-600">Ajouter un contact</summary>
-          <form action={creerEtLierContact} className="mt-3 space-y-3">
-            <input type="hidden" name="eleve_id" value={eleve.id} />
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Prénom</label>
-                <input className="input" name="prenom" required />
-              </div>
-              <div>
-                <label className="label">Nom</label>
-                <input className="input" name="nom" required />
-              </div>
-            </div>
-            <div>
-              <label className="label">Lien avec l'élève</label>
-              <select className="input" name="lien">
-                {LIENS.map((l) => (
-                  <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Téléphone</label>
-                <input className="input" name="telephone" />
-              </div>
-              <div>
-                <label className="label">Email</label>
-                <input className="input" type="email" name="email" />
-              </div>
-            </div>
-            <div>
-              <label className="label">Adresse</label>
-              <input className="input" name="adresse" />
-            </div>
-            <label className="flex items-center gap-2 text-sm text-ardoise-600">
-              <input type="checkbox" name="contact_principal" /> Contact principal
-            </label>
-            <button className="btn-primary text-sm" type="submit">Ajouter le contact</button>
-          </form>
-        </details>
-      </div>
-
-      <div className="card">
-        <h2 className="mb-3 font-display text-lg text-ardoise-700">Absences</h2>
-        <ul className="mb-3 space-y-1 text-sm">
-          {absences?.map((a) => (
-            <li key={a.id} className="flex items-center justify-between">
-              <span>{new Date(a.date).toLocaleDateString("fr-FR")}{a.motif ? ` — ${a.motif}` : ""}</span>
-              <form action={supprimerAbsence}>
-                <input type="hidden" name="absence_id" value={a.id} />
-                <input type="hidden" name="eleve_id" value={eleve.id} />
-                <button className="text-xs text-red-500 underline" type="submit">Supprimer</button>
-              </form>
-            </li>
-          ))}
-          {(!absences || absences.length === 0) && <li className="text-ardoise-400">Aucune absence.</li>}
-        </ul>
-        <form action={ajouterAbsence} className="flex flex-wrap items-end gap-2">
-          <input type="hidden" name="eleve_id" value={eleve.id} />
-          <input className="input" type="date" name="date" required />
-          <input className="input" name="motif" placeholder="Motif (optionnel)" />
-          <button className="btn-ghost border border-ardoise-200 text-sm" type="submit">Déclarer</button>
-        </form>
+              <th className="py-2 pr-3">Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            {historique.map((e: any) => (
+              <tr key={e.id} className="border-b border-ardoise-100">
+                <td className="py-2 pr-3">{e.eleves?.prenom} {e.eleves?.nom}</td>
+                <td className="py-2 pr-3">{e.livres?.titre}</td>
+                <td className="py-2 pr-3">{new Date(e.date_emprunt).toLocaleDateString("fr-FR")}</td>
+                <td className="py-2 pr-3">{e.date_retour ? new Date(e.date_retour).toLocaleDateString("fr-FR") : "—"}</td>
+                <td className="py-2 pr-3">
+                  {e.date_retour ? (
+                    <span className="text-ardoise-500">Rendu</span>
+                  ) : (
+                    <span className="text-corail">En cours</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {historique.length === 0 && <p className="mt-4 text-sm text-ardoise-400">Aucun emprunt enregistré.</p>}
       </div>
     </div>
   );
